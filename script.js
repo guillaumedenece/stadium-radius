@@ -19,74 +19,104 @@ loadingControl.addTo(map);
 // URL de l'API des équipements sportifs
 const baseApiUrl = 'https://equipements.sports.gouv.fr/api/explore/v2.1/catalog/datasets/data-es/records';
 const limit = 100;
-const maxCalls = 150; // Limite le nombre d'appels à l'API
+
+// Liste des départements français (codes INSEE)
+const departements = [
+    '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',
+    '11', '12', '13', '14', '15', '16', '17', '18', '19', '2A',
+    '2B', '21', '22', '23', '24', '25', '26', '27', '28', '29',
+    '30', '31', '32', '33', '34', '35', '36', '37', '38', '39',
+    '40', '41', '42', '43', '44', '45', '46', '47', '48', '49',
+    '50', '51', '52', '53', '54', '55', '56', '57', '58', '59',
+    '60', '61', '62', '63', '64', '65', '66', '67', '68', '69',
+    '70', '71', '72', '73', '74', '75', '76', '77', '78', '79',
+    '80', '81', '82', '83', '84', '85', '86', '87', '88', '89',
+    '90', '91', '92', '93', '94', '95', '971', '972', '973', '974', '976'
+];
 
 // Variables globales pour stocker les cercles et les marqueurs
 let currentMarkers = null;
 let currentCircles = [];
+
+// Fonction pour charger les stades d'un département
+async function chargerStadesParDepartement(departement) {
+    let stades = [];
+    let offset = 0;
+    let hasMoreData = true;
+
+    while (hasMoreData) {
+        const url = `${baseApiUrl}?select=inst_nom%2C%20coordonnees&where=search(inst_nom%2C%20%27stade%27)%20AND%20startswith(inst_cp%2C%20%27${departement}%27)&limit=${limit}&offset=${offset}`;
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Erreur HTTP: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.results && data.results.length > 0) {
+                const validStades = data.results.filter(stade =>
+                    stade.coordonnees &&
+                    stade.coordonnees.lat &&
+                    stade.coordonnees.lon
+                );
+
+                stades = stades.concat(validStades);
+
+                if (data.results.length < limit) {
+                    hasMoreData = false;
+                }
+            } else {
+                hasMoreData = false;
+            }
+
+            offset += limit;
+        } catch (error) {
+            console.error(`Erreur lors de la récupération des données pour le département ${departement}:`, error);
+            hasMoreData = false;
+        }
+    }
+
+    return stades;
+}
 
 // Fonction pour charger tous les stades de France
 async function chargerTousLesStades() {
     try {
         document.getElementById('loading').style.display = 'block';
         let allStades = [];
-        let offset = 0;
-        let hasMoreData = true;
-        let callCount = 0;
+        let currentDepartementIndex = 0;
 
-        while (hasMoreData && callCount < maxCalls) {
-            const url = `${baseApiUrl}?select=inst_nom%2C%20coordonnees&where=search(inst_nom%2C%20%27stade%27)&limit=${limit}&offset=${offset}`;
-
-            try {
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Erreur HTTP: ${response.status}`);
-                }
-
-                const data = await response.json();
-
-                if (data.results && data.results.length > 0) {
-                    // Filtrer les résultats qui ont des coordonnées valides
-                    const validStades = data.results.filter(stade =>
-                        stade.coordonnees &&
-                        stade.coordonnees.lat &&
-                        stade.coordonnees.lon
-                    );
-
-                    allStades = allStades.concat(validStades);
-
-                    // Vérifier s'il y a plus de données
-                    if (data.results.length < limit) {
-                        hasMoreData = false;
-                    }
-                } else {
-                    hasMoreData = false;
-                }
-
-                offset += limit;
-                callCount++;
-
-                // Mettre à jour l'indicateur de chargement
+        // Fonction récursive pour charger les stades département par département
+        async function chargerDepartementSuivant() {
+            if (currentDepartementIndex < departements.length) {
+                const departement = departements[currentDepartementIndex];
                 document.getElementById('loading').innerHTML =
-                    `Chargement des stades... (${allStades.length} stades chargés)`;
+                    `Chargement des stades... (${allStades.length} stades chargés, département ${departement})`;
 
-            } catch (error) {
-                console.error(`Erreur lors de la récupération des données (offset ${offset}):`, error);
-                hasMoreData = false;
+                const stadesDepartement = await chargerStadesParDepartement(departement);
+                allStades = allStades.concat(stadesDepartement);
+
+                currentDepartementIndex++;
+                setTimeout(chargerDepartementSuivant, 100); // Petit délai pour éviter de surcharger l'API
+            } else {
+                // Tous les départements ont été traités
+                if (allStades.length > 0) {
+                    addStadesToMap(allStades);
+                    document.getElementById('loading').style.display = 'none';
+                    console.log(`${allStades.length} stades chargés avec succès`);
+                } else {
+                    console.log("Aucun stade trouvé, utilisation des données de démonstration");
+                    document.getElementById('loading').style.display = 'none';
+                    addDemoStadesToMap();
+                }
             }
         }
 
-        // Si nous avons trouvé des stades, les afficher
-        if (allStades.length > 0) {
-            addStadesToMap(allStades);
-            document.getElementById('loading').style.display = 'none';
-            console.log(`${allStades.length} stades chargés avec succès`);
-        } else {
-            // Utiliser les données de démonstration
-            console.log("Aucun stade trouvé, utilisation des données de démonstration");
-            document.getElementById('loading').style.display = 'none';
-            addDemoStadesToMap();
-        }
+        // Démarrer le chargement département par département
+        chargerDepartementSuivant();
+
     } catch (error) {
         console.error("Erreur lors du chargement des stades:", error);
         document.getElementById('loading').style.display = 'none';
